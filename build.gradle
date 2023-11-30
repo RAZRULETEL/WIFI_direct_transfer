@@ -1,0 +1,39 @@
+plugins {
+    id 'java'
+    id 'maven-publish'
+    id 'org.jetbrains.kotlin.jvm' version '1.9.20-Beta'
+}
+
+version = '1.0'
+
+sourceCompatibility = 1.9
+targetCompatibility = 1.9
+
+java {
+	withSourcesJar()
+	withJavadocJar()
+}
+
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
+  kotlinOptions {
+    jvmTarget = "9"
+  }
+}
+publishing {
+    publications {
+        maven(MavenPublication) {
+		from components.java
+        }
+    }
+}
+
+wrapper {
+    gradleVersion = "8.0.1"
+    distributionType = Wrapper.DistributionType.ALL
+}
+
+repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+}
