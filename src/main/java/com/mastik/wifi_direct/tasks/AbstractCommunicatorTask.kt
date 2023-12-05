@@ -13,5 +13,5 @@ abstract class AbstractCommunicatorTask: Runnable, Communicator {
     override fun getFileSender() = communicator.getFileSender()
 
     override fun setOnNewMessageListener(onNewMessage: Consumer<String>) = communicator.setOnNewMessageListener(onNewMessage)
-    override fun setOnNewFileListener(onNewFile: Function<String, FileDescriptorTransferInfo>) = communicator.setOnNewFileListener(onNewFile)
+    override fun setOnNewFileListener(onNewFile: Function<String, FileDescriptorTransferInfo?>) = communicator.setOnNewFileListener(onNewFile)
 }

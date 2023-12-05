@@ -10,6 +10,7 @@ import java.io.DataInputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
 import java.io.OutputStreamWriter
@@ -90,7 +91,7 @@ open class SocketCommunicator() : Communicator {
     }
 
     private var newMessageListener: Consumer<String>? = null
-    private var newFileListener: Function<String, FileDescriptorTransferInfo>? = null
+    private var newFileListener: Function<String, FileDescriptorTransferInfo?>? = null
 
 
     @Throws(IOException::class)
@@ -133,7 +134,12 @@ open class SocketCommunicator() : Communicator {
                 val fileName = String(buffer).substring(0, nameLength)
                 messageBuff.clear()
 
-                newFileListener?.apply(fileName)?.let {
+                newFileListener?.apply(fileName).also {
+                    if(it == null){
+                        while (dataSize > 0)
+                            dataSize -= rawStream.skip(min(dataSize.toInt(), DEFAULT_BUFFER_SIZE).toLong())
+                        return@also
+                    }
                     val fileStream = FileOutputStream(it.descriptor)
 
                     var total: Long = 0
@@ -170,5 +176,5 @@ open class SocketCommunicator() : Communicator {
     override fun getFileSender(): Consumer<FileDescriptorTransferInfo> = onFileSend
 
     override fun setOnNewMessageListener(onNewMessage: Consumer<String>) { newMessageListener = onNewMessage }
-    override fun setOnNewFileListener(onNewFile: Function<String, FileDescriptorTransferInfo>) { newFileListener = onNewFile }
+    override fun setOnNewFileListener(onNewFile: Function<String, FileDescriptorTransferInfo?>) { newFileListener = onNewFile }
 }
