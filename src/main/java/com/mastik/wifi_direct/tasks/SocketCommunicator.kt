@@ -154,14 +154,14 @@ open class SocketCommunicator() : Communicator {
                         fileStream.write(buffer, 0, toRead)
 
                         total += toRead
-                        if (i % 15 == 0) {
-                            val cost = System.currentTimeMillis() - start// TODO: update info async, for better performance
-                            it.updateTransferProgress(FileTransferProgressInfo(total, dataSize + total, total.toFloat() / cost / 1000))
-                        }
+                        if (i % 15 == 0)
+                            TaskExecutors.getCachedPool().execute {
+                                it.updateTransferProgress(FileTransferProgressInfo(total, dataSize + total, total.toFloat() / (System.currentTimeMillis() - start) * 1000))
+                            }
                         i++
                     }
                     // Trigger end transfer listener
-                    it.updateTransferProgress(FileTransferProgressInfo(total, total, total.toFloat() / (System.currentTimeMillis() - start) / 1000))
+                    it.updateTransferProgress(FileTransferProgressInfo(total, total, total.toFloat() / (System.currentTimeMillis() - start) * 1000))
                     fileStream.close()
                 }
                 println("Successfully readed file")
