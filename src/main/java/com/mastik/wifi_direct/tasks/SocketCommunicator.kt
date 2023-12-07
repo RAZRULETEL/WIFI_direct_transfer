@@ -1,16 +1,15 @@
 package com.mastik.wifi_direct.tasks
 
+//import timber.log.Timber
 import com.mastik.wifi_direct.transfer.Communicator
 import com.mastik.wifi_direct.transfer.Communicator.Companion.MAGIC_FILE_BYTE
 import com.mastik.wifi_direct.transfer.Communicator.Companion.MAGIC_STRING_BYTE
 import com.mastik.wifi_direct.transfer.FileDescriptorTransferInfo
 import com.mastik.wifi_direct.transfer.FileTransferProgressInfo
-//import timber.log.Timber
 import java.io.DataInputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
-import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
 import java.io.OutputStreamWriter
@@ -170,6 +169,10 @@ open class SocketCommunicator() : Communicator {
             println("Unknown magic number $magic")
             throw SocketException("Unknown magic number")
         }
+    }
+
+    fun isBusy(): Boolean {
+        return writeLock.isLocked
     }
 
     override fun getMessageSender(): Consumer<String> = onMessageSend
