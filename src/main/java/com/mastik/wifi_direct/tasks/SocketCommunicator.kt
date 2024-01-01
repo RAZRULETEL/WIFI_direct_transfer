@@ -1,11 +1,11 @@
 package com.mastik.wifi_direct.tasks
 
-//import timber.log.Timber
 import com.mastik.wifi_direct.transfer.Communicator
 import com.mastik.wifi_direct.transfer.Communicator.Companion.MAGIC_FILE_BYTE
 import com.mastik.wifi_direct.transfer.Communicator.Companion.MAGIC_STRING_BYTE
 import com.mastik.wifi_direct.transfer.FileDescriptorTransferInfo
 import com.mastik.wifi_direct.transfer.FileTransferProgressInfo
+import trikita.log.Log
 import java.io.DataInputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -17,15 +17,15 @@ import java.net.Socket
 import java.net.SocketException
 import java.nio.CharBuffer
 import java.nio.charset.Charset
+import java.util.concurrent.locks.Condition
 import java.util.concurrent.locks.ReentrantLock
 import java.util.function.Consumer
 import java.util.function.Function
+import kotlin.concurrent.withLock
 import kotlin.math.min
 
 open class SocketCommunicator() : Communicator {
     companion object {
-        val TAG: String = SocketCommunicator::class.simpleName!!
-
         const val DEFAULT_BUFFER_SIZE = 32_768
     }
 
@@ -33,14 +33,14 @@ open class SocketCommunicator() : Communicator {
     private var outTextStream: OutputStreamWriter? = null
 
     private val writeLock = ReentrantLock(true)
+    private var loopStarted: Condition? = writeLock.newCondition()
 
     private val onMessageSend: Consumer<String> = Consumer<String> { message ->
-        val outStream = outTextStream
-        outStream?.let {
-            writeLock.lock()
-            try {
+        writeLock.withLock {
+            loopStarted?.await()
+            outTextStream?.let {
                 val len = message.length
-                println("Send message of %len bytes: %message")
+                Log.d("Sending message of $len bytes: ", message)
                 try {
                     it.write(MAGIC_STRING_BYTE)
                     it.flush()
@@ -49,45 +49,51 @@ open class SocketCommunicator() : Communicator {
                     it.write(message)
                     it.flush()
                 } catch (e: IOException) {
-                    println("Send message error: ${e.message}")
+                    Log.e("Send message error: ", e)
                 }
-            } catch (_: Exception) {
-            } finally {
-                writeLock.unlock()
             }
         }
     }
 
 
-    private val onFileSend: Consumer<FileDescriptorTransferInfo> = Consumer<FileDescriptorTransferInfo> { file ->
-        println("Send file: ${file.name}")
-        mainOutStream?.let {
-            val fileStream = DataInputStream(FileInputStream(file.descriptor))
-            writeLock.lock()
-            try {
-                it.write(MAGIC_FILE_BYTE)
-                it.flush()
-                for (i in 0 until Int.SIZE_BYTES) mainOutStream!!.write(fileStream.available() shr (i * 8))
-                it.flush()
+    private val onFileSend: Consumer<FileDescriptorTransferInfo> =
+        Consumer<FileDescriptorTransferInfo> { file ->
+            Log.d("Sending file: ${file.name}")
+            writeLock.withLock {
+                loopStarted?.await()
+                mainOutStream?.let {
+                    val fileStream = DataInputStream(FileInputStream(file.descriptor))
 
-                outTextStream!!.write(file.name.toCharArray())
-                outTextStream!!.write(0)
-                outTextStream!!.flush()
+                    it.write(MAGIC_FILE_BYTE)
+                    it.flush()
+                    for (i in 0 until Int.SIZE_BYTES) mainOutStream!!.write(fileStream.available() shr (i * 8))
+                    it.flush()
 
-                val arr = ByteArray(DEFAULT_BUFFER_SIZE)
-                while (fileStream.available() > 0) {
-                    println("Available: ${fileStream.available()}")
-                    val toRead = min(fileStream.available(), DEFAULT_BUFFER_SIZE)
-                    fileStream.readFully(arr, 0, toRead)
-                    it.write(arr, 0, toRead)
+                    outTextStream!!.write(file.name.toCharArray())
+                    outTextStream!!.write(0)
+                    outTextStream!!.flush()
+
+                    var sentBytes: Long = 0
+                    val sendingStart = System.currentTimeMillis()
+                    val arr = ByteArray(DEFAULT_BUFFER_SIZE)
+
+                    while (fileStream.available() > 0) {
+                        val toRead = min(fileStream.available(), DEFAULT_BUFFER_SIZE)
+                        fileStream.readFully(arr, 0, toRead)
+                        it.write(arr, 0, toRead)
+                        sentBytes += toRead
+                        file.updateTransferProgress(
+                            FileTransferProgressInfo(
+                                sentBytes,
+                                fileStream.available() + sentBytes,
+                                sentBytes.toFloat() / (System.currentTimeMillis() - sendingStart) * 1000
+                            )
+                        )
+                    }
+                    it.flush()
                 }
-                it.flush()
-            } catch (_: Exception) {
-            } finally {
-                writeLock.unlock()
             }
         }
-    }
 
     private var newMessageListener: Consumer<String>? = null
     private var newFileListener: Function<String, FileDescriptorTransferInfo?>? = null
@@ -95,8 +101,13 @@ open class SocketCommunicator() : Communicator {
 
     @Throws(IOException::class)
     fun readLoop(socket: Socket) {
-        mainOutStream = socket.getOutputStream()
-        outTextStream = OutputStreamWriter(socket.getOutputStream(), Charset.forName("UTF-8"))
+        writeLock.withLock {
+            loopStarted!!.signalAll()
+            loopStarted = null
+
+            mainOutStream = socket.getOutputStream()
+            outTextStream = OutputStreamWriter(socket.getOutputStream(), Charset.forName("UTF-8"))
+        }
 
         val rawStream = socket.getInputStream()
         val stream = InputStreamReader(socket.getInputStream())
@@ -116,7 +127,7 @@ open class SocketCommunicator() : Communicator {
                 stream.read(messageBuff)
 
                 val message = messageBuff.position(0).toString().substring(0, dataSize.toInt())
-                println("Received $dataSize bytes: %message")
+                Log.d("Received $dataSize bytes: ", message)
                 newMessageListener?.accept(message)
                 messageBuff.clear()
                 continue
@@ -126,7 +137,7 @@ open class SocketCommunicator() : Communicator {
 
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                 rawStream.read(buffer, 0, 1)
-                while(buffer[nameLength].toInt() and 0xFF != 0) {
+                while (buffer[nameLength].toInt() and 0xFF != 0) {
                     rawStream.read(buffer, ++nameLength, 1)
                 }
 
@@ -134,9 +145,14 @@ open class SocketCommunicator() : Communicator {
                 messageBuff.clear()
 
                 newFileListener?.apply(fileName).also {
-                    if(it == null){
+                    if (it == null) {
                         while (dataSize > 0)
-                            dataSize -= rawStream.skip(min(dataSize.toInt(), DEFAULT_BUFFER_SIZE).toLong())
+                            dataSize -= rawStream.skip(
+                                min(
+                                    dataSize.toInt(),
+                                    DEFAULT_BUFFER_SIZE
+                                ).toLong()
+                            )
                         return@also
                     }
                     val fileStream = FileOutputStream(it.descriptor)
@@ -144,29 +160,49 @@ open class SocketCommunicator() : Communicator {
                     var total: Long = 0
                     val start = System.currentTimeMillis()
                     var i = 0
+
                     // Trigger start transfer listener
                     it.updateTransferProgress(FileTransferProgressInfo(0, dataSize, 0f))
+
                     while (dataSize > 0) {
                         val toRead = min(dataSize.toInt(), buffer.size)
-                        rawStream.readNBytes(buffer, 0, toRead)// Some slower than read, but data is not damaging
+                        rawStream.readNBytes(
+                            buffer,
+                            0,
+                            toRead
+                        )
                         dataSize -= toRead
                         fileStream.write(buffer, 0, toRead)
 
                         total += toRead
                         if (i % 15 == 0)
                             TaskExecutors.getCachedPool().execute {
-                                it.updateTransferProgress(FileTransferProgressInfo(total, dataSize + total, total.toFloat() / (System.currentTimeMillis() - start) * 1000))
+                                it.updateTransferProgress(
+                                    FileTransferProgressInfo(
+                                        total,
+                                        dataSize + total,
+                                        total.toFloat() / (System.currentTimeMillis() - start) * 1000
+                                    )
+                                )
                             }
                         i++
                     }
+
                     // Trigger end transfer listener
-                    it.updateTransferProgress(FileTransferProgressInfo(total, total, total.toFloat() / (System.currentTimeMillis() - start) * 1000))
+                    it.updateTransferProgress(
+                        FileTransferProgressInfo(
+                            total,
+                            total,
+                            total.toFloat() / (System.currentTimeMillis() - start) * 1000
+                        )
+                    )
+
                     fileStream.close()
+                    Log.d("Successfully read file: ", fileName)
                 }
-                println("Successfully readed file")
                 continue
             }
-            println("Unknown magic number $magic")
+            Log.d("Unknown magic number $magic")
             throw SocketException("Unknown magic number")
         }
     }
@@ -178,6 +214,11 @@ open class SocketCommunicator() : Communicator {
     override fun getMessageSender(): Consumer<String> = onMessageSend
     override fun getFileSender(): Consumer<FileDescriptorTransferInfo> = onFileSend
 
-    override fun setOnNewMessageListener(onNewMessage: Consumer<String>) { newMessageListener = onNewMessage }
-    override fun setOnNewFileListener(onNewFile: Function<String, FileDescriptorTransferInfo?>) { newFileListener = onNewFile }
+    override fun setOnNewMessageListener(onNewMessage: Consumer<String>) {
+        newMessageListener = onNewMessage
+    }
+
+    override fun setOnNewFileListener(onNewFile: Function<String, FileDescriptorTransferInfo?>) {
+        newFileListener = onNewFile
+    }
 }

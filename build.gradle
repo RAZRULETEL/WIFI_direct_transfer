@@ -1,29 +1,31 @@
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
     id 'java'
     id 'maven-publish'
     id 'org.jetbrains.kotlin.jvm' version '1.9.20-Beta'
 }
 
-version = '1.0'
+version = '1.1'
 group = 'com.github.RAZRULETEL'
 
 sourceCompatibility = 1.9
 targetCompatibility = 1.9
 
 java {
-	withSourcesJar()
-	withJavadocJar()
+    withSourcesJar()
+    withJavadocJar()
 }
 
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
-  kotlinOptions {
-    jvmTarget = "9"
-  }
+tasks.withType(KotlinCompile).all {
+    kotlinOptions {
+        jvmTarget = "9"
+    }
 }
 publishing {
     publications {
         maven(MavenPublication) {
-		from components.java
+            from components.java
         }
     }
 }
@@ -37,4 +39,8 @@ repositories {
     google()
     mavenCentral()
     gradlePluginPortal()
+}
+
+dependencies {
+    implementation 'co.trikita:log:1.1.5'
 }
