@@ -5,7 +5,6 @@ import com.mastik.wifi_direct.transfer.Communicator.Companion.MAGIC_FILE_BYTE
 import com.mastik.wifi_direct.transfer.Communicator.Companion.MAGIC_STRING_BYTE
 import com.mastik.wifi_direct.transfer.FileDescriptorTransferInfo
 import com.mastik.wifi_direct.transfer.FileTransferProgressInfo
-import jdk.internal.net.http.common.Utils.close
 import trikita.log.Log
 import java.io.DataInputStream
 import java.io.FileInputStream
