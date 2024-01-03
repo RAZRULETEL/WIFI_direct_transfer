@@ -10,22 +10,29 @@ class FileDescriptorTransferInfo(val descriptor: FileDescriptor, val name: Strin
         const val STATE_TRANSFER_COMPLETED = 2
         const val STATE_TRANSFER_ERROR = 3
     }
-    private var transferState: Int = STATE_CREATED
+    var transferState: Int = STATE_CREATED
+        private set
 
     private val progressListeners = mutableListOf<Consumer<FileTransferProgressInfo>>()
-    var onTransferStartListener: Consumer<FileTransferProgressInfo>? = null
-    var onTransferEndListener: Consumer<FileTransferProgressInfo>? = null
+    private val transferEndListeners = mutableListOf<Consumer<FileTransferProgressInfo>>()
 
     fun addProgressListener(progressListener: Consumer<FileTransferProgressInfo>){
         progressListeners.add(progressListener)
     }
 
-    fun updateTransferProgress(progress: FileTransferProgressInfo){
-        if(progress.bytesProgress > 0 && transferState == STATE_CREATED){
-            transferState = STATE_TRANSFER_IN_PROGRESS
-            onTransferStartListener?.accept(progress)
-        }
+    fun removeProgressListener(progressListener: Consumer<FileTransferProgressInfo>){
+        progressListeners.remove(progressListener)
+    }
 
+    fun addTransferEndListener(endListener: Consumer<FileTransferProgressInfo>){
+        transferEndListeners.add(endListener)
+    }
+
+    fun removeTransferEndListener(endListener: Consumer<FileTransferProgressInfo>){
+        transferEndListeners.remove(endListener)
+    }
+
+    fun updateTransferProgress(progress: FileTransferProgressInfo){
         progressListeners.forEach { it.accept(progress) }
 
         if(progress.bytesProgress == progress.bytesTotal && transferState == STATE_TRANSFER_IN_PROGRESS){
@@ -35,6 +42,6 @@ class FileDescriptorTransferInfo(val descriptor: FileDescriptor, val name: Strin
 
     fun endTransferProgress(progress: FileTransferProgressInfo){
         transferState = if(progress.bytesProgress == progress.bytesTotal) STATE_TRANSFER_COMPLETED else STATE_TRANSFER_ERROR
-        onTransferEndListener?.accept(progress)
+        transferEndListeners.forEach{ it.accept(progress) }
     }
 }

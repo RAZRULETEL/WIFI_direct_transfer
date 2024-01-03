@@ -181,12 +181,7 @@ open class SocketCommunicator() : Communicator {
 
                     val fileStream = FileOutputStream(it.descriptor)
                     try {
-
-
                         var i = 0
-
-                        // Trigger start transfer listener
-                        it.updateTransferProgress(FileTransferProgressInfo(0, dataSize, 0f))
 
                         while (dataSize > 0) {
                             val toRead = min(dataSize.toInt(), buffer.size)
