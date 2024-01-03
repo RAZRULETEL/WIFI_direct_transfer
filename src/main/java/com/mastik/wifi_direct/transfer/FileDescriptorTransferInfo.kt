@@ -8,6 +8,7 @@ class FileDescriptorTransferInfo(val descriptor: FileDescriptor, val name: Strin
         const val STATE_CREATED = 0
         const val STATE_TRANSFER_IN_PROGRESS = 1
         const val STATE_TRANSFER_COMPLETED = 2
+        const val STATE_TRANSFER_ERROR = 3
     }
     private var transferState: Int = STATE_CREATED
 
@@ -27,9 +28,13 @@ class FileDescriptorTransferInfo(val descriptor: FileDescriptor, val name: Strin
 
         progressListeners.forEach { it.accept(progress) }
 
-        if(progress.bytesProgress == progress.bytesTotal){
-            transferState = STATE_TRANSFER_COMPLETED
-            onTransferEndListener?.accept(progress)
+        if(progress.bytesProgress == progress.bytesTotal && transferState == STATE_TRANSFER_IN_PROGRESS){
+            endTransferProgress(progress)
         }
+    }
+
+    fun endTransferProgress(progress: FileTransferProgressInfo){
+        transferState = if(progress.bytesProgress == progress.bytesTotal) STATE_TRANSFER_COMPLETED else STATE_TRANSFER_ERROR
+        onTransferEndListener?.accept(progress)
     }
 }

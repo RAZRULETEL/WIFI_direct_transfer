@@ -5,6 +5,7 @@ import com.mastik.wifi_direct.transfer.Communicator.Companion.MAGIC_FILE_BYTE
 import com.mastik.wifi_direct.transfer.Communicator.Companion.MAGIC_STRING_BYTE
 import com.mastik.wifi_direct.transfer.FileDescriptorTransferInfo
 import com.mastik.wifi_direct.transfer.FileTransferProgressInfo
+import jdk.internal.net.http.common.Utils.close
 import trikita.log.Log
 import java.io.DataInputStream
 import java.io.FileInputStream
@@ -64,33 +65,45 @@ open class SocketCommunicator() : Communicator {
                 mainOutStream?.let {
                     val fileStream = DataInputStream(FileInputStream(file.descriptor))
 
-                    it.write(MAGIC_FILE_BYTE)
-                    it.flush()
-                    for (i in 0 until Int.SIZE_BYTES) mainOutStream!!.write(fileStream.available() shr (i * 8))
-                    it.flush()
-
-                    outTextStream!!.write(file.name.toCharArray())
-                    outTextStream!!.write(0)
-                    outTextStream!!.flush()
-
                     var sentBytes: Long = 0
                     val sendingStart = System.currentTimeMillis()
-                    val arr = ByteArray(DEFAULT_BUFFER_SIZE)
+                    try {
+                        it.write(MAGIC_FILE_BYTE)
+                        it.flush()
+                        for (i in 0 until Int.SIZE_BYTES) mainOutStream!!.write(fileStream.available() shr (i * 8))
+                        it.flush()
 
-                    while (fileStream.available() > 0) {
-                        val toRead = min(fileStream.available(), DEFAULT_BUFFER_SIZE)
-                        fileStream.readFully(arr, 0, toRead)
-                        it.write(arr, 0, toRead)
-                        sentBytes += toRead
-                        file.updateTransferProgress(
+                        outTextStream!!.write(file.name.toCharArray())
+                        outTextStream!!.write(0)
+                        outTextStream!!.flush()
+
+                        val arr = ByteArray(DEFAULT_BUFFER_SIZE)
+
+                        while (fileStream.available() > 0) {
+                            val toRead = min(fileStream.available(), DEFAULT_BUFFER_SIZE)
+                            fileStream.readFully(arr, 0, toRead)
+                            it.write(arr, 0, toRead)
+                            sentBytes += toRead
+                            file.updateTransferProgress(
+                                FileTransferProgressInfo(
+                                    sentBytes,
+                                    fileStream.available() + sentBytes,
+                                    sentBytes.toFloat() / (System.currentTimeMillis() - sendingStart) * 1000
+                                )
+                            )
+                        }
+                        it.flush()
+                    } finally {
+                        file.endTransferProgress(
                             FileTransferProgressInfo(
                                 sentBytes,
                                 fileStream.available() + sentBytes,
                                 sentBytes.toFloat() / (System.currentTimeMillis() - sendingStart) * 1000
                             )
                         )
+
+                        fileStream.close()
                     }
-                    it.flush()
                 }
             }
         }
@@ -155,49 +168,55 @@ open class SocketCommunicator() : Communicator {
                             )
                         return@also
                     }
-                    val fileStream = FileOutputStream(it.descriptor)
 
                     var total: Long = 0
                     val start = System.currentTimeMillis()
-                    var i = 0
 
-                    // Trigger start transfer listener
-                    it.updateTransferProgress(FileTransferProgressInfo(0, dataSize, 0f))
+                    val fileStream = FileOutputStream(it.descriptor)
+                    try {
 
-                    while (dataSize > 0) {
-                        val toRead = min(dataSize.toInt(), buffer.size)
-                        rawStream.readNBytes(
-                            buffer,
-                            0,
-                            toRead
-                        )
-                        dataSize -= toRead
-                        fileStream.write(buffer, 0, toRead)
 
-                        total += toRead
-                        if (i % 15 == 0)
-                            TaskExecutors.getCachedPool().execute {
-                                it.updateTransferProgress(
-                                    FileTransferProgressInfo(
-                                        total,
-                                        dataSize + total,
-                                        total.toFloat() / (System.currentTimeMillis() - start) * 1000
+                        var i = 0
+
+                        // Trigger start transfer listener
+                        it.updateTransferProgress(FileTransferProgressInfo(0, dataSize, 0f))
+
+                        while (dataSize > 0) {
+                            val toRead = min(dataSize.toInt(), buffer.size)
+                            rawStream.readNBytes(
+                                buffer,
+                                0,
+                                toRead
+                            )
+                            dataSize -= toRead
+                            fileStream.write(buffer, 0, toRead)
+
+                            total += toRead
+                            if (i % 15 == 0)
+                                TaskExecutors.getCachedPool().execute {
+                                    it.updateTransferProgress(
+                                        FileTransferProgressInfo(
+                                            total,
+                                            dataSize + total,
+                                            total.toFloat() / (System.currentTimeMillis() - start) * 1000
+                                        )
                                     )
-                                )
-                            }
-                        i++
+                                }
+                            i++
+                        }
+                    } finally {
+                        // Trigger end transfer listener
+                        it.endTransferProgress(
+                            FileTransferProgressInfo(
+                                total,
+                                dataSize + total,
+                                total.toFloat() / (System.currentTimeMillis() - start) * 1000
+                            )
+                        )
+
+                        fileStream.close()
                     }
 
-                    // Trigger end transfer listener
-                    it.updateTransferProgress(
-                        FileTransferProgressInfo(
-                            total,
-                            total,
-                            total.toFloat() / (System.currentTimeMillis() - start) * 1000
-                        )
-                    )
-
-                    fileStream.close()
                     Log.d("Successfully read file: ", fileName)
                 }
                 continue

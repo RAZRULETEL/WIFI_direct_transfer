@@ -11,6 +11,7 @@ import java.util.concurrent.locks.ReadWriteLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.util.function.Consumer
 import java.util.function.Function
+import kotlin.concurrent.withLock
 
 class ServerStartTask(
     private val defaultPort: Int,
@@ -65,6 +66,8 @@ class ServerStartTask(
             while (!server.isClosed) {
                 val client = server.accept()
                 TaskExecutors.getCachedPool().execute {
+                    newClientListener?.accept(client.inetAddress.hostAddress)
+
                     val newClient = SocketCommunicator()
                     newClient.setOnNewMessageListener() {
                         newMessageListener?.accept(it)
@@ -72,27 +75,24 @@ class ServerStartTask(
                     newClient.setOnNewFileListener() {
                         return@setOnNewFileListener newFileListener?.apply(it)
                     }
-                    communicatorsLock.writeLock().lock()
-                    try{
-                        communicators.getOrPut(client.inetAddress.hostAddress!!){
+                    communicatorsLock.writeLock().withLock {
+                        communicators.getOrPut(client.inetAddress.hostAddress!!) {
                             return@getOrPut LinkedList()
                         }.add(newClient)
-                    } finally {
-                        communicatorsLock.writeLock().unlock()
                     }
                     try {
                         newClient.readLoop(client)
                     } catch (_: Exception) {
                     } finally {
-                        communicatorsLock.writeLock().lock()
-                        communicators[client.inetAddress.hostAddress!!]?.remove(newClient)
-                        communicatorsLock.writeLock().unlock()
+                        communicatorsLock.writeLock().withLock {
+                            communicators[client.inetAddress.hostAddress!!]?.remove(newClient)
+                        }
                     }
                 }
             }
             server.close()
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("Server stopped with error: ", e)
         } finally {
             communicators.clear()
             isServerRunning.set(false)
@@ -102,32 +102,26 @@ class ServerStartTask(
     override fun getFileSender(): Consumer<FileDescriptorTransferInfo> =
         Consumer { transferInfo ->
             val fileSenders: MutableList<Consumer<FileDescriptorTransferInfo>> = mutableListOf()
-            communicatorsLock.writeLock().lock()
-            try {
+            communicatorsLock.writeLock().withLock {
                 communicators.forEach {
-                    if(it.value.size <= 0)
+                    if (it.value.size <= 0)
                         return@forEach
                     fileSenders.add(it.value[0].getFileSender())
                     it.value.addLast(it.value.removeFirst())
                 }
-            } finally {
-                communicatorsLock.writeLock().unlock()
             }
-            for(sender in fileSenders)
+            for (sender in fileSenders)
                 sender.accept(transferInfo)
         }
 
     override fun getMessageSender(): Consumer<String> =
         Consumer { message ->
-            communicatorsLock.readLock().lock()
-            try {
+            communicatorsLock.readLock().withLock {
                 communicators.forEach {
-                    if(it.value.size <= 0)
+                    if (it.value.size <= 0)
                         return@forEach
                     it.value[0].getMessageSender().accept(message)
                 }
-            } finally {
-                communicatorsLock.readLock().unlock()
             }
         }
 
@@ -139,7 +133,7 @@ class ServerStartTask(
         newMessageListener = onNewMessage
     }
 
-    fun getActiveConnections(): Int{
+    fun getActiveConnections(): Int {
         return communicators.values.sumOf { e -> e.size }
     }
 
@@ -147,7 +141,7 @@ class ServerStartTask(
         return communicators.keys.filter { e -> communicators[e]!!.size > 0 }
     }
 
-    fun setOnNewClientListener(newClientListener: Consumer<String>){
+    fun setOnNewClientListener(newClientListener: Consumer<String>) {
         this.newClientListener = newClientListener
     }
 }

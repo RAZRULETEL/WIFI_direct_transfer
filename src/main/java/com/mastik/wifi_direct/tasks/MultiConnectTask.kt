@@ -8,6 +8,7 @@ import java.util.concurrent.locks.ReadWriteLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.util.function.Consumer
 import java.util.function.Function
+import kotlin.concurrent.withLock
 
 class MultiConnectTask(
     private val host: String,
@@ -20,58 +21,38 @@ class MultiConnectTask(
     private var newFileListener: Function<String, FileDescriptorTransferInfo?>? = null
     private var newMessageListener: Consumer<String>? = null
 
-    private fun createCommunicator() {
-        communicatorsLock.writeLock().lock()
-        try {
+    private fun createCommunicator(): Communicator {
+        communicatorsLock.writeLock().withLock {
             val newCommunicator = ConnectTask(host, defaultPort)
-            newCommunicator.setOnNewMessageListener {
+            newCommunicator.setOnNewMessageListener{
                 newMessageListener?.accept(it)
             }
-            newCommunicator.setOnNewFileListener {
+            newCommunicator.setOnNewFileListener{
                 return@setOnNewFileListener newFileListener?.apply(it)
             }
-            communicators.addFirst(newCommunicator)
+            communicators.add(newCommunicator)
             try {
                 TaskExecutors.getCachedPool().execute {
                     newCommunicator.run()
 
-                    communicatorsLock.writeLock().lock()
-                    communicators.remove(newCommunicator)
-                    communicatorsLock.writeLock().unlock()
+                    communicatorsLock.writeLock().withLock {
+                        communicators.remove(newCommunicator)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("Connection to WIFI P2P client error: ", e)
             }
-        } finally {
-            communicatorsLock.writeLock().unlock()
+            return newCommunicator
         }
     }
-
     override fun getFileSender(): Consumer<FileDescriptorTransferInfo> =
         Consumer { transferInfo ->
-            if (communicators.size <= 0 || communicators.all { e -> e.isBusy() })
-                createCommunicator()
-
-            val communicator: Consumer<FileDescriptorTransferInfo>
-            communicatorsLock.writeLock().lock()
-            try {
-                communicator = communicators[0].getFileSender()
-                communicators.addLast(communicators.removeFirst())
-            } finally {
-                communicatorsLock.writeLock().unlock()
-            }
-            communicator.accept(transferInfo)
+            nextFreeOrNewCommunicator().getFileSender().accept(transferInfo)
         }
 
     override fun getMessageSender(): Consumer<String> =
         Consumer { message ->
-            if (communicators.size <= 0)
-                createCommunicator()
-
-            communicatorsLock.readLock().lock()
-            val cmc = communicators[0].getMessageSender()
-            communicatorsLock.readLock().unlock()
-            cmc.accept(message)
+            nextFreeOrNewCommunicator().getMessageSender().accept(message)
         }
 
     override fun setOnNewFileListener(onNewFile: Function<String, FileDescriptorTransferInfo?>) {
@@ -91,4 +72,16 @@ class MultiConnectTask(
     fun getActiveConnections(): Int {
         return communicators.size
     }
+
+    private fun nextFreeOrNewCommunicator(): Communicator {
+        var communicator: Communicator? = null
+        communicatorsLock.readLock().withLock {
+            communicator = communicators.find { e -> !e.isBusy() }
+        }
+        if(communicator == null)
+            communicator = createCommunicator()
+
+        return communicator!!
+    }
+
 }
