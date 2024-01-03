@@ -82,7 +82,8 @@ class ServerStartTask(
                     }
                     try {
                         newClient.readLoop(client)
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        Log.e("Incoming connection error: ", e)
                     } finally {
                         communicatorsLock.writeLock().withLock {
                             communicators[client.inetAddress.hostAddress!!]?.remove(newClient)

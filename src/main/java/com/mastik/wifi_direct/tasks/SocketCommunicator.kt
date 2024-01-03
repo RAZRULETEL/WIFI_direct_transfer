@@ -66,7 +66,10 @@ open class SocketCommunicator() : Communicator {
 
                     var sentBytes: Long = 0
                     val sendingStart = System.currentTimeMillis()
+                    var fileSize: Long = 0
                     try {
+                        fileSize = fileStream.available().toLong() // For small files that will be correct
+
                         it.write(MAGIC_FILE_BYTE)
                         it.flush()
                         for (i in 0 until Int.SIZE_BYTES) mainOutStream!!.write(fileStream.available() shr (i * 8))
@@ -83,10 +86,11 @@ open class SocketCommunicator() : Communicator {
                             fileStream.readFully(arr, 0, toRead)
                             it.write(arr, 0, toRead)
                             sentBytes += toRead
+                            fileSize = fileStream.available() + sentBytes
                             file.updateTransferProgress(
                                 FileTransferProgressInfo(
                                     sentBytes,
-                                    fileStream.available() + sentBytes,
+                                    fileSize,
                                     sentBytes.toFloat() / (System.currentTimeMillis() - sendingStart) * 1000
                                 )
                             )
@@ -96,12 +100,16 @@ open class SocketCommunicator() : Communicator {
                         file.endTransferProgress(
                             FileTransferProgressInfo(
                                 sentBytes,
-                                fileStream.available() + sentBytes,
+                                fileSize,
                                 sentBytes.toFloat() / (System.currentTimeMillis() - sendingStart) * 1000
                             )
                         )
 
-                        fileStream.close()
+                        try {
+                            fileStream.close()
+                        } catch (e: IOException) {
+                            Log.e("File stream close error: ", e)
+                        }
                     }
                 }
             }
@@ -153,7 +161,7 @@ open class SocketCommunicator() : Communicator {
                     rawStream.read(buffer, ++nameLength, 1)
                 }
 
-                val fileName = String(buffer).substring(0, nameLength)
+                val fileName = String(buffer.copyOf(nameLength))
                 messageBuff.clear()
 
                 newFileListener?.apply(fileName).also {
